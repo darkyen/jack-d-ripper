@@ -1,25 +1,28 @@
-const ffmpeg = require('fluent-ffmpeg');
-const fs = require('fs');
+const Ffmpeg = require('fluent-ffmpeg');
+const fs = require('fs-extra');
 const path = require('path');
 const Promise = require('bluebird');
+const ProgressBar = require('progress');
 const ffbinaries = require('ffbinaries');
-const winDrives = require('win-eject');
 const crypto = require('crypto');
 const os = require('os');
-const {Tray, Menu, app, BrowserWindow} = require('electron'); 
+const inquirer = require('inquirer');
+const LocalStorage = require('node-localstorage');
 
+const OUT_PATH = os.tmpdir();
 const SAMPLE_SIZE = 100 * 1024;
 const MIN_SIZE = 1024;
-const TEMP_SPACE_NAMESPACE = 'NODE_RIPPER'; 
+const VOB_CONTAINER = 'VIDEO_TS';
 
 Promise.promisifyAll(fs);
 Promise.promisifyAll(ffbinaries);
 
-async function getMovieFiles (drive) {
-	const files = await fs.readdirAsync(path);
+async function getMovieFiles (root) {
+	const dvdPath = path.join(root, VOB_CONTAINER);
+	const files = await fs.readdirAsync(dvdPath);
 	const vobFiles = files
 		.filter(name => !!name.toLowerCase().match(/.vob$/))
-		.map(name => path.join(DVD_PATH, name));
+		.map(name => path.join(dvdPath, name));
 	
 	const stats = await Promise.map(vobFiles, async vobFile => {
 		const stat = await fs.statAsync(vobFile);
@@ -38,87 +41,101 @@ function mergeVideos (files, filename) {
 		total: 100
 	});
 	let oldPercent = 0;
-	const tr = ffmpeg();
+	const tr = Ffmpeg();
 	files.forEach(file => {
-		tr.mergeAdd(file.path);
-		tr.mergeAdd(TRANSITION_SCREEN);
+		tr.addInput(file.path);
 	});
 	tr.format('mp4');
-	tr.output(path.join(OUT_PATH, filename));
-	tr.run();
+	tr.mergeToFile(filename, os.tmpdir());
+
 	return new Promise(function (resolve, reject) {
-		tr.on('stderr', err => console.error(err));
 		tr.on('progress', progress => {
-			console.log(progress);
+			// console.log(progress);
 		});
 		tr.on('end', resolve);
 		tr.on('error', reject);
 	});
 }
 
-async function convert (drive, filename, childWindow) {
-	const merger = await mergeVideos(files, filename, childWindow);
-}
-
 async function getHashName (files) {
 	const hash = crypto.createHash('sha256');
-	await Promise.forEach(files, async file => {
+	await Promise.each(files, async file => {
 		const fd = await fs.openAsync(file.path, 'r');
 		const buffer = Buffer.alloc(SAMPLE_SIZE * 1024);
-		const data = await fs.readAsync(fd, buffer, 0, SAMPLE_SIZE * 1024);
+		await fs.readAsync(fd, buffer, 0, SAMPLE_SIZE * 1024, 0);
 		hash.update(buffer);
 	});
 	return hash.digest('hex');
 }
 
-async function handleDiskInserted () {
-	const files  = await getMovieFiles(drive);
+async function handleDiskInserted (root) {
+	console.log("Disk was inserted at", root);
+	const files  = await getMovieFiles(root);
+
 	if (files.length < 1) {
 		return;
 	}
 
+	console.log("Hashing files to check if already imported");
 	const hashed = await getHashName(files);
-	const directoryName = path.join(os.tmpdir(), TEMP_SPACE_NAMESPACE, hashed);
 	
-	if (fs.existsSync(directoryName)) {
+	if (false) {
+		console.log('Disk was already imported, bailing out');
 		return;
 	}
-	/* Show prompt to import */
-}
 
+	const {filename} = await inquirer.prompt({
+		type: 'input',
+		name: 'filename',
+		message: 'Enter the intended name for the DVD'
+  	});
+	
+	const directory = path.join(os.homedir(), 'Videos', 'JACK DVD RIPPER');
+	console.log("Ripping files to disk, this may take a while");
+	await fs.ensureDir(directory);
+	mergeVideos(files, path.join(directory, `${filename}.mp4`));
+}
 
 async function downloadBinaries () {
-	const ffbinariesDownloaded = fs.existsSync('./ffbinaries/ffmpeg');
+	const ffbinariesDownloaded = fs.existsSync(`./ffbinaries/ffmpeg${os.platform() === 'win32'?'.exe':''}`);
 	/* download ffmpeg binaries if not found */
 	if (!ffbinariesDownloaded) {
-		const browserWindow = new BrowserWindow({
-			center: true,
-			movable: false,
-			skipTaskbar: true,
-			useContentSize: true,
-			width: 480,
-			height: 240
-		});
-		browserWindow.loadURL(`file:///${process.cwd()}/screens/install.html`);
-		browserWindow.setProgressBar(14, "indeterminate");
+		console.log("FFmpeg binaries not found, the app will now try to fetch these binaries, this is a 1 time installation.");
 		await ffbinaries.downloadFilesAsync({
-			destination: './ffbinaries'
+			destination: './ffbinaries',
+			quiet: true
 		});
-		browserWindow.destroy();
+		console.log("Binaries download complete.");
 	}
 }
 
-async function main () {
-	const tray = new Tray('./vendor/dvd.png');
+
+async function main (args) {
 	await downloadBinaries();
-	/* Set a watcher (on windows only), this will allow us to popup almost immediately, because windows */
-	if ( os.platform() === 'win32' ) {
-		const drives = await listDrives();
-		return drives.forEach(drive => {
-			const watcher = fs.watch(path.join(drive + 'VIDEO_TS'));
-			watcher.on('rename', e => handleDiskInserted(drive));
-		});
+
+	const isWin32 = os.platform() === 'win32';
+	const extn = isWin32?'.exe':'';
+
+	Ffmpeg.setFfmpegPath(`./ffbinaries/ffmpeg${extn}`);
+	Ffmpeg.setFfprobePath(`./ffbinaries/ffprobe${extn}`);
+	Ffmpeg.setFlvtoolPath(`./ffbinaries/flvtool${extn}`);
+
+	const command = args[2];
+	switch(command) {
+		case 'rip':
+			const source = args[3];
+
+			if(!source){
+				return console.error('No source specified');
+			} 
+			handleDiskInserted(args[3]);
+		break;
+		case 'list':
+
+		default:
+			console.error("Unknonw command ", command, "valid commands are rip to rip a dvd to disk and list to show all the ripped dvd");
+		break;
 	}
 }
 
-app.on('ready', main);
+main(process.argv);
