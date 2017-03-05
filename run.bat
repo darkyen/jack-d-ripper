@@ -1,1 +1,1 @@
-npm run app %*
+npm run app rip %*
