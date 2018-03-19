@@ -1,8 +1,5 @@
 # Jack DVD Ripper
-A simple dvd ripper tool, I wanted to help a neighbour move a ton of dvd's while handbrake etc are fun to use they are kinda stupendous
-when you want to move like 300 dvds. So, well I thought how awesome would it be if I can copy paste the .vob first and then transcode it
-for many many hours in a bulk. And thats exactly what Jack D Ripper does, it creates a busffer area in `/tmp/` and then transcodes them 
-at a later time.
+A simple dvd ripper tool, I wanted to help a neighbour move a ton of dvd's while handbrake etc are fun to use they are kinda stupid when you want to move like 300 dvds. So, well I thought how awesome would it be if I can copy paste the .vob first and then transcode it for many many hours in a bulk. And thats exactly what Jack D Ripper does, it creates a busffer area in `/tmp/` and then transcodes them  at a later time.
 
 ### What it does?
 - Jack DVD Ripper is a tray tool, it will sit in your tray waiting for the ~~commies~~ dvds to be inserted.
